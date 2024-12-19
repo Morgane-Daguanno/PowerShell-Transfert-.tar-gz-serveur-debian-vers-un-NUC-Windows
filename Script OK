@@ -1,0 +1,155 @@
+# Variables
+$sourceFile = "/Transfert/fichier.tar.gz"
+$destinationFile = "C:\Users\SEB\Desktop\TRANSFERT DEBIAN\fichier.tar.gz"
+
+# FTP source (Debian)
+$ftpServerSource = "ftp://10.10.121.21/Transfert/fichier.tar.gz"
+$ftpUsername = "SEB"
+$ftpPassword = "Root1234"
+
+# FTP destination (Windows)
+$ftpServerDestination = "ftp://10.10.121.183/Transfert/fichier.tar.gz"
+$ftpUserDest = "SEB"
+$ftpPsswdDest = "Welcome123"
+
+# Email
+$emailFrom = "morganedag22@gmail.com"
+$emailTo = "morganedag22@gmail.com"
+$smtpServer = "smtp.gmail.com"
+$smtpUsername = "morganedag22@gmail.com"
+$smtpPassword = "ibmm khoi temj frmz"  # Mot de passe d'application
+
+# Créez le répertoire de destination s'il n'existe pas
+if (-Not (Test-Path -Path "C:\Users\SEB\Desktop\TRANSFERT DEBIAN")) {
+    New-Item -ItemType Directory -Path "C:\Users\SEB\Desktop\TRANSFERT DEBIAN"
+}
+
+# Messages de débogage
+Write-Host "Chemin du fichier source : $sourceFile"
+Write-Host "Chemin du fichier de destination : $destinationFile"
+Write-Host "URL FTP source : $ftpServerSource"
+Write-Host "URL FTP destination : $ftpServerDestination"
+
+# Téléchargement du fichier depuis la VM expéditeur
+try {
+    Write-Host "Téléchargement du fichier depuis la VM expéditeur en cours..."
+    $credentialsSource = New-Object System.Management.Automation.PSCredential ($ftpUsername, (ConvertTo-SecureString $ftpPassword -AsPlainText -Force))
+    Invoke-WebRequest -Uri $ftpServerSource -OutFile $destinationFile -Credential $credentialsSource
+    Write-Host "Téléchargement réussi depuis la VM expéditeur."
+} catch {
+    Write-Host "Le téléchargement depuis la source a échoué. Erreur : $_.Exception.Message"
+    $subject = "Échec du transfert"
+    $body = @"
+<html>
+<head><meta charset="UTF-8"></head>
+<body>
+<h2 style="color:red;">❌ Échec du transfert</h2>
+<p>Bonjour,</p>
+<p>Le transfert du fichier <b>$sourceFile</b> a échoué.</p>
+<p><b>Erreur :</b> $_.Exception.Message</p>
+</body>
+</html>
+"@
+    Send-MailMessage -From $emailFrom -To $emailTo -Subject $subject -Body $body -BodyAsHtml -SmtpServer $smtpServer -UseSsl -Credential (New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $smtpUsername, (ConvertTo-SecureString $smtpPassword -AsPlainText -Force)) -Port 587
+    exit
+}
+
+# Vérifiez que le fichier local existe avant le téléversement
+if (-Not (Test-Path -Path $destinationFile)) {
+    Write-Host "Le fichier $destinationFile n'existe pas. Téléchargement échoué."
+    exit
+}
+
+# Téléversement du fichier vers la VM destinataire
+try {
+    Write-Host "Téléversement du fichier vers la VM destinataire en cours..."
+    $ftpRequest = [System.Net.FtpWebRequest]::Create($ftpServerDestination)
+    $ftpRequest.Method = [System.Net.WebRequestMethods+Ftp]::UploadFile
+    $ftpRequest.Credentials = New-Object System.Net.NetworkCredential($ftpUserDest, $ftpPsswdDest)
+    $ftpRequest.UseBinary = $true
+    $ftpRequest.UsePassive = $true
+
+    $fileContent = [System.IO.File]::ReadAllBytes($destinationFile)
+    $ftpRequest.ContentLength = $fileContent.Length
+
+    $requestStream = $ftpRequest.GetRequestStream()
+    $requestStream.Write($fileContent, 0, $fileContent.Length)
+    $requestStream.Close()
+
+    $ftpResponse = $ftpRequest.GetResponse()
+    $ftpResponse.Close()
+
+    Write-Host "Téléversement réussi vers la VM destinataire."
+
+    # Envoi d'un email de succès avec personnalisation
+    $subject = "Transfert réussi : $sourceFile"
+    $body = @"
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; }
+    h2 { color: green; }
+    p { margin: 10px 0; }
+    .footer { font-size: 12px; color: gray; margin-top: 20px; }
+</style>
+</head>
+<body>
+<h2>✔️ Transfert Réussi</h2>
+<p>Bonjour,</p>
+<p>Le fichier suivant a été transféré avec succès :</p>
+<ul>
+    <li><b>Fichier :</b> $sourceFile</li>
+    <li><b>Serveur source :</b> 10.10.121.21</li>
+    <li><b>Serveur destination :</b> 10.10.121.183</li>
+    <li><b>Date et heure :</b> $(Get-Date -Format "dd/MM/yyyy HH:mm:ss")</li>
+</ul>
+<p>Merci pour votre confiance.</p>
+<p class="footer">Cet email a été généré automatiquement, merci de ne pas répondre.</p>
+</body>
+</html>
+"@
+
+    $smtpClient = New-Object Net.Mail.SmtpClient($smtpServer, 587)
+    $smtpClient.EnableSsl = $true
+    $smtpClient.Credentials = New-Object System.Net.NetworkCredential($smtpUsername, $smtpPassword)
+
+    $mailMessage = New-Object Net.Mail.MailMessage
+    $mailMessage.From = $emailFrom
+    $mailMessage.To.Add($emailTo)
+    $mailMessage.Subject = $subject
+    $mailMessage.Body = $body
+    $mailMessage.IsBodyHtml = $true
+    $mailMessage.BodyEncoding = [System.Text.Encoding]::UTF8
+
+    $smtpClient.Send($mailMessage)
+} catch {
+    Write-Host "Le téléversement a échoué. Erreur : $_.Exception.Message"
+    $subject = "Échec du transfert"
+    $body = @"
+<html>
+<head><meta charset="UTF-8"></head>
+<body>
+<h2 style="color:red;">❌ Échec du transfert</h2>
+<p>Bonjour,</p>
+<p>Le transfert du fichier <b>$sourceFile</b> a échoué lors du téléversement.</p>
+<p><b>Erreur :</b> $_.Exception.Message</p>
+</body>
+</html>
+"@
+
+    $smtpClient = New-Object Net.Mail.SmtpClient($smtpServer, 587)
+    $smtpClient.EnableSsl = $true
+    $smtpClient.Credentials = New-Object System.Net.NetworkCredential($smtpUsername, $smtpPassword)
+
+    $mailMessage = New-Object Net.Mail.MailMessage
+    $mailMessage.From = $emailFrom
+    $mailMessage.To.Add($emailTo)
+    $mailMessage.Subject = $subject
+    $mailMessage.Body = $body
+    $mailMessage.IsBodyHtml = $true
+    $mailMessage.BodyEncoding = [System.Text.Encoding]::UTF8
+
+    $smtpClient.Send($mailMessage)
+    exit
+}
